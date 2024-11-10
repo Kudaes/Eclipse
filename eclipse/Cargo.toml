@@ -1,0 +1,17 @@
+[package]
+name = "eclipse"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dinvoke_rs = "0.2.0"
+getopts = "0.2.0"
+litcrypt2 = "=0.1.2"
+ntapi = "0.4.0"
+
+[dependencies.windows]
+version = "0.51"
+features = [
+    "Win32_System",
+    "Win32_System_ApplicationInstallationAndServicing",
+]
