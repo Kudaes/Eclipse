@@ -84,12 +84,12 @@ fn main()
     let args: Vec<String> = env::args().collect();
     let program = args[0].clone();
     let mut opts = Options::new();
-    opts.reqopt("m", "mode", "Hijack the Activation Context of a new (spawn) or an already running (hijack) process.", "");
     opts.optflag("h", "help", "Print this help menu.");
-    opts.optopt("b", "binary", ".", "Absolute path of the executable used to spawn the new process.");
-    opts.optopt("f", "manifest-file", "", "Path of the manifest path to use to create the new Activation Context.");
+    opts.reqopt("m", "mode", "Hijack the Activation Context of a new (spawn) or an already running (hijack) process.", "");
+    opts.optopt("b", "binary", "Absolute path to the executable used to spawn the new process.", "");
+    opts.optopt("f", "manifest-file", "Path to the manifest file from which the new Activation Context is created.", "");
     opts.optopt("r", "resource-number", r"Resource index of the current executable where the manifest is located.", "");
-    opts.optopt("i", "pid", r"ID of the process whose Activation Context is to be hijacked.", "");
+    opts.optopt("i", "pid", r"PID of the process whose Activation Context is to be hijacked.", "");
 
     let matches = match opts.parse(&args[1..]) 
     {
