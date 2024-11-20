@@ -1,0 +1,23 @@
+﻿<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0" xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
+<assemblyIdentity version="5.1.0.0" processorArchitecture="amd64" name="Microsoft.Windows.rdpclip" type="win32"></assemblyIdentity>
+<description>RDP Clipboard Monitor</description>
+<trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+        <requestedPrivileges>
+            <requestedExecutionLevel level="asInvoker" uiAccess="false"></requestedExecutionLevel>
+        </requestedPrivileges>
+    </security>
+</trustInfo>
+<application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+       <disableWindowFiltering xmlns="http://schemas.microsoft.com/SMI/2011/WindowsSettings">true</disableWindowFiltering>
+    </windowsSettings>
+</application>
+<asmv3:application>
+    <asmv3:windowsSettings xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">
+        <dpiAware>true/PM</dpiAware>
+    </asmv3:windowsSettings>
+</asmv3:application>
+  <file name="crypt32.dll" hash="optional" loadFrom="C:/Path/To/Your/exporttracer.dll"/>
+</assembly>

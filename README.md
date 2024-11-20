@@ -20,6 +20,17 @@ Eclipse is a PoC that performs [Activation Context](https://learn.microsoft.com/
     -p, --pid           PID of the process whose Activation Context is to be
                         hijacked.
 
+# Content
+
+- [How it works](#How-it-works)
+- [How to use it](#How-to-use-it)
+- [Examples](#Examples)
+  - [Hijack AC of a new process](#Hijack-AC-of-a-new-process)
+  - [Spawn powershell with ETW and AMSI disabled](#Spawn-powershell-with-ETW-and-AMSI-disabled)
+  - [Hijack the AC of an already running process](#Hijack-the-AC-of-an-already-running-process)
+- [Conclusions](#Conclusions)
+- [References](#References)
+
 # How it works 
 
 By definition, Activation Contexts are "data structures in memory containing information that the system can use to redirect an application to load a particular DLL version" and also can be used to determine the path from where a specific dll has to be loaded. An Activation Context is created by parsing the contents of a manifest file. When a process is created, the OS parses the binary's manifest (which can be embbeded in the binary itself or as a independent file in the same directory) and it maps in the memory of the newly spawned process what I call the main **Activation Context**. This main AC will be used to find the right file each time a DLL has to be loaded (regardless of whether this load is due to dependencies in the IAT of a module or as a call to Loadlibray). 
@@ -122,7 +133,7 @@ Change the `loadFrom` field of the manifest file to point to the generated `prox
 
 Note how unlike when performing a regular DLL proxying, with this technique the proxy DLL does not need to have the same name as the DLL to which the calls are being forwarded, removing that specific IoC.
 
-## Spawn powershell without ETW and AMSI
+## Spawn powershell with ETW and AMSI disabled
 
 Since the hijack of the main AC of a process allows us to redirect the load of any DLL, this technique can be used to modify the behaviour of a process. As a example, let's see how to use Eclipse to spawn a `powershell.exe` process with ETW (usermode) and AMSI disabled. To do so, we just need to redirect the loading of the DLLs responsible of those features: `amsi.dll` and `advapi32.dll`. First, let's create with ADPT the proxy DLL that will intercept the calls to `amsi.dll`:
 
@@ -263,14 +274,13 @@ Then, hijack the AC of the service with the following command (admin privileges 
 	[+] Activation Context mapped in the remote process.
 	[+] PEB successfully patched.
 
-Once this is done, if we execute `RpcClient` once again, instead of looking for `SprintCSP.dll` in all the paths set in `%PATH%` envar, the service will load the DLL located in `C:\Temp\MyDll.dll`:
+Once this is done, if we execute `RpcClient` once again instead of looking for `SprintCSP.dll` in all the paths set in `%PATH%` envar the service will load the DLL located in `C:\Temp\MyDll.dll`:
 
 ![StorSvc AC hijacked.](/images/hijack2.PNG "StorSvc AC hijacked.")
 
 In this case, the `FactoryResetUICC` of my DLL was just an infinite loop and its execution can be checked using PH:
 
 ![FactoryResetUICC function executed.](/images/hijack3.PNG "FactoryResetUICC function executed.")
-
 
 # Conclusions
 # References

@@ -1,0 +1,10 @@
+﻿<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1" xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
+ <assemblyIdentity type="win32" name="Test.exe" processorArchitecture="amd64" version="7.0.18.12988"></assemblyIdentity>
+ <asmv3:application>
+  <asmv3:windowsSettings>
+   <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+  </asmv3:windowsSettings>
+ </asmv3:application>
+     <file name="SprintCSP.dll" hash="optional" loadFrom="C:/Temp/MyDll.dll"/>
+</assembly>
