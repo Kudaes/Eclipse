@@ -37,10 +37,10 @@ By definition, Activation Contexts are "data structures in memory containing inf
 
 Additionally, a thread can create and activate a custom AC at runtime. In that particular scenario, if that specific thread tries to load a DLL the thread's custom AC will be used first and, just in case that AC doesn't contain information regarding the DLL to be loaded, then the main AC of the process will be consulted. 
 
-The memory address of the main AC of a process is obtained from the PEB, while custom AC activated by a thread are obtained from a AC stack located in the TEB. This mean one thread can create and activate multiple custom AC which will be pushed on an AC stack, and only the last activated AC (the one on top of the stack) will be used to determine the path of a DLL to be loaded.
+The memory address of the main AC of a process is obtained from the PEB, while custom AC activated by a thread are obtained from an AC stack located in the TEB. This mean one thread can create and activate multiple custom AC which will be pushed on this AC stack, and only the last activated AC (the one on top of the stack) will be used to determine the path of a DLL to be loaded.
 
 With this in mind, Eclipse offers two modes of use:
-* You can spawn a new process where your want to run your DLL. In this case, the process will be spawned in suspended mode and the main AC referenced by the PEB will be hijacked, allowing to set a custom AC (which I will refer to in this README as the “malicious” AC) as the main AC of the process. This will redirect the application to load your DLL instead of the legitimate DLL that would be loaded normally when the process execution is resumed.
+* You can spawn a new process to run your DLL in it. In this case, the process will be spawned in suspended mode and the main AC referenced by the PEB will be hijacked, allowing to set a custom AC (which I will refer to in this README as the “malicious” AC) as the main AC of the process. This will redirect the application to load your DLL instead of the legitimate DLL that would be loaded normally when the process execution is resumed.
 * You can try to hijack the active AC of a running process. In case the main thread of that particular process has a custom AC activated, Eclipse will hijack the AC stack located in the TEB. Otherwise, the main AC referenced in the PEB will be hijacked. The result in both cases is the same: in case the main thread of the process tries to load a DLL referenced by the malicious AC created by Eclipse, your DLL will be loaded instead. 
 
 # How to use it 
@@ -60,11 +60,11 @@ In case you want to embed the modified manifest file in the resulting Eclipse ex
 ## Hijack AC of a new process
 
 This first example is meant to give some guidelines on how to use AC hijack to load and run your DLL in a trusted process. In this case, `rdpclip.exe` (Windows 10 workstation) will be the selected process, although this methodology can be applied to almost any other process.
-First, we need to find a DLL that will be loaded by the process in a regular execution. For this, we can use [PE-bear](https://github.com/hasherezade/pe-bear) to inspect the IAT of the binary.
+First, we need to find a DLL that will be loaded in that process in a normal execution. For this, we can use [PE-bear](https://github.com/hasherezade/pe-bear) to inspect the IAT of the binary.
 
 ![rdpclip.exe IAT.](/images/pebear.PNG "rdpclip.exe IAT.")
 
-This inspection shows that `crypt32.dll` will be loaded at the process initialization, meaning this DLL is one of the multiple potential targets. Now, we need to know if any function of this DLL is being called during the normal execution of this process. For that, I use [ADPT](https://github.com/Kudaes/ADPT) ExportTracer, that will log in a file each function of this DLL that is called during the execution of the process. The ExportTracer DLL can be created with the following command (check ADPT Readme file for further instructions about how to use the tool):
+This inspection shows that `crypt32.dll` will be loaded at the process initialization, meaning this DLL is one of the multiple potential targets. Now, we need to know if any function of this DLL is being called during the normal execution of this process. For that, I use [ADPT](https://github.com/Kudaes/ADPT) ExportTracer, that will log in a file each function of a particular DLL that is called during the execution of the process. The ExportTracer DLL can be created with the following command (check ADPT Readme file for further instructions about how to use the tool):
 	
 	C:\Path\To\ADPT\Generator\target\release> generator.exe -m trace -p C:\Windows\System32\crypt32.dll -l C:\Temp\logfile.txt
 	C:\Path\To\ADPT\ExportTracer> cargo build --release
@@ -97,7 +97,7 @@ Then add the following `<file>` element to the contents of the extracted manifes
         <dpiAware>true/PM</dpiAware>
     </asmv3:windowsSettings>
 </asmv3:application>
-  <file name="crypt32.dll" hash="optional" loadFrom="C:/Path/To/Your/exporttracer.dll"/>
+  <file name="crypt32.dll" hash="optional" loadFrom="C:/Path/To/Your/exporttracer.dll"/> -> Add this line
 </assembly>
 ```
 
@@ -117,17 +117,17 @@ Finally, run the tool:
 	[+] PEB successfully patched.
 	[-] Resuming process...
 
-Inspecting the newly spawned `rdpclip.exe` process with PH will reveal that `exporttracer.dll` has been loaded. The ExportTracer acts as a proxy, meaning it loads the legitimate `crypt32.dll` to forward all the received calls, but it will also register in `C:\Temp\logfile.txt` all the functions from `crypt32.dll` that have been called from `rdpclip.exe`:
+Inspecting the newly spawned `rdpclip.exe` process with PH will reveal that `exporttracer.dll` has been loaded. The ExportTracer acts as a proxy, meaning it loads the legitimate `crypt32.dll` to forward to it all the received calls, but it will also register in `C:\Temp\logfile.txt` all the functions of `crypt32.dll` that have been called from `rdpclip.exe`:
 
 ![exporttracer.dll loaded in rdpclip.exe.](/images/exporttracer.PNG "exporttracer.dll loaded in rdpclip.exe.")
 ![Log file.](/images/exporttracer_log.PNG "Log file.")
 
-Now, we just need to use `ADPT` once again to create a proxy dll that runs our desired payload on one of the called functions. In this case, I select the first one, `I_CryptCreateLruCache`:
+Now, we just need to use `ADPT` once again to create a proxy dll that runs our desired payload in one of the functions present in the log file generated by the ExportTracer DLL. In this case, I select the first one, `I_CryptCreateLruCache`:
 
 	C:\Path\To\ADPT\Generator\target\release> generator.exe -m proxy -p C:\Windows\System32\crypt32.dll -e I_CryptCreateLruCache
 	C:\Path\To\ADPT\ProxyDll> cargo build --release
 
-Change the `loadFrom` field of the manifest file to point to the generated `proxydll.dll` and embed the manifest in `eclipse.exe` as before. Kill the previously spawned `rdpclip.exe` process (only one `rdpclip.exe` can be running per user session) and run Eclipse once again. The ProxyDll will be loaded and the payload inserted in the `I_CryptCreateLruCache` function will be executed within `rdpclip.exe` (in this case, just an infinite loop in a new thread):
+Change the `loadFrom` field of the `C:\Temp\rdpclip.exe.manifest` file to point to the generated `proxydll.dll` and embed the manifest in `eclipse.exe` as before. Kill the previously spawned `rdpclip.exe` process (only one `rdpclip.exe` can be running per user session) and run Eclipse once again. The ProxyDll will be loaded and the payload inserted in the `I_CryptCreateLruCache` function will be executed within `rdpclip.exe` (in this case, just an infinite loop in a new thread):
 
 ![Main AC hijacked.](/images/proxydll.PNG "Main AC hijacked.")
 
@@ -149,11 +149,11 @@ fn AmsiScanBuffer(arg1:u64, arg2:u64, arg3:u64, arg4:u64, arg5:u64, arg6:u64, ar
 }
 ```
 
-Then compile on `release` mode the project. Then, we do the same to create the DLL that will intercept the calls to `advapi32.dll`: 
+After that compile on `release` mode the project. Then, we do the same to create the DLL that will intercept the calls to `advapi32.dll`: 
 
 	C:\Path\To\ADPT\Generator\target\release> generator.exe -m proxy -p C:\Windows\System32\advapi32.dll -e EventWrite,EventWriteEx,EventWriteString,EventWriteTransfer
 
-In the generated template, modify the code of the specified functions (`EventWrite`, `EventWriteEx`, `EventWriteString` and `EventWriteTransfer`) so they just return the value `0x6` (which is the `ERROR_INVALID_HANDLE` flag):
+In the generated template, modify the code of the specified functions (`EventWrite`, `EventWriteEx`, `EventWriteString` and `EventWriteTransfer`) so they just return the value `0x6` (which corresponds to the `ERROR_INVALID_HANDLE` flag):
 
 ```rust
 #[no_mangle]
@@ -233,11 +233,11 @@ The new `powershell.exe` process will have AMSI and ETW disabled. The first one 
 
 ![AMSI disabled.](/images/powershell1.PNG "AMSI disabled.")
 
-To check that ETW is disabled too, the tab .NET assemblies of PH can be used. This tab opens an ETW session to get this information, but the CLR is unable to write the required events due to our proxy DLL always returning `ERROR_INVALID_HANDLE`:
+To check that ETW is disabled too, the tab .NET assemblies of PH can be used. This tab opens an ETW session to get this information, but since the CLR is unable to write the required events due to our proxy DLL always returning `ERROR_INVALID_HANDLE` no information is displayed and instead an error message appears:
 
 ![ETW disabled.](/images/powershell2.PNG "ETW disabled.")
 
-This is just an example to show the potential of the tecnique. The same concept could be abused to modify the behaviour of a process in many other ways.
+This is just an example to show the potential of the technique. The same concept could be abused to modify the behaviour of a process in many other ways.
 
 ## Hijack the AC of an already running process
 
@@ -262,7 +262,7 @@ We can use Eclipse to redirect the service into loading this DLL from a specific
 
 Then, hijack the AC of the service with the following command (admin privileges required since `StorSvc` runs as `SYSTEM`):
 
-	C:\Path\To\Eclipse\eclipse\target\release> eclipse.exe -m hijack -d -p <storsvc pid> -f C:\Temp\crafted.manifest
+	C:\Path\To\Eclipse\eclipse\target\release> eclipse.exe -m hijack -d -p <storsvc pid> -f C:\Temp\storsvc.manifest
 	[+] SeDebugPrivilege enabled.
 	[+] Local Activation Context created.
 	[-] Looking for the remote process main thread...
@@ -274,11 +274,11 @@ Then, hijack the AC of the service with the following command (admin privileges 
 	[+] Activation Context mapped in the remote process.
 	[+] PEB successfully patched.
 
-Once this is done, if we execute `RpcClient` once again instead of looking for `SprintCSP.dll` in all the paths set in `%PATH%` envar the service will load the DLL located in `C:\Temp\MyDll.dll`:
+Once this is done, if we execute `RpcClient` once again instead of following the default DLL search order the service will load the DLL located in `C:\Temp\MyDll.dll`, executing the `FactoryResetUICC` exported function of that DLL:
 
 ![StorSvc AC hijacked.](/images/hijack2.PNG "StorSvc AC hijacked.")
 
-In this case, the `FactoryResetUICC` of my DLL was just an infinite loop and its execution can be checked using PH:
+In this case, the `FactoryResetUICC` of `C:/Temp/MyDll.dll` was just an infinite loop and its execution can be checked using PH:
 
 ![FactoryResetUICC function executed.](/images/hijack3.PNG "FactoryResetUICC function executed.")
 

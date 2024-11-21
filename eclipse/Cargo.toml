@@ -9,6 +9,12 @@ getopts = "0.2.0"
 litcrypt2 = "=0.1.2"
 ntapi = "0.4.0"
 
+[profile.release]
+opt-level = 'z'     # Optimize for size
+lto = true          # Enable link-time optimization
+codegen-units = 1   # Reduce number of codegen units to increase optimizations
+strip = true        # Strip symbols from binary*
+
 [dependencies.windows]
 version = "0.51"
 features = [

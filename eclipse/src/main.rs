@@ -84,14 +84,14 @@ fn main()
     let args: Vec<String> = env::args().collect();
     let program = args[0].clone();
     let mut opts = Options::new();
-    opts.optflag("h", "help", "Print this help menu.");
-    opts.reqopt("m", "mode", "Hijack the Activation Context of a new (spawn) or an already running (hijack) process.", "");
-    opts.optopt("b", "binary", "Absolute path to the executable used to spawn the new process.", "");
-    opts.optopt("f", "manifest-file", "Path to the manifest file from which the new Activation Context is created.", "");
-    opts.optopt("r", "resource-number", "Resource index of the current executable where the manifest is located.", "");
-    opts.optopt("p", "pid", "PID of the process whose Activation Context is to be hijacked.", "");
-    opts.optflag("n", "new-console", "Set CREATE_NEW_CONSOLE flag to spawn the new process.");
-    opts.optflag("d", "debug", "Enable SeDebugPrivilege to interact with the remote process.");
+    opts.optflag("h", &lc!("help"), &lc!("Print this help menu."));
+    opts.reqopt("m", &lc!("mode"), &lc!("Hijack the Activation Context of a new (spawn) or an already running (hijack) process."), "");
+    opts.optopt("b", &lc!("binary"), &lc!("Absolute path to the executable used to spawn the new process."), "");
+    opts.optopt("f", &lc!("manifest-file"), &lc!("Path to the manifest file from which the new Activation Context is created."), "");
+    opts.optopt("r", &lc!("resource-number"), &lc!("Resource index of the current executable where the manifest is located."), "");
+    opts.optopt("p", &lc!("pid"), &lc!("PID of the process whose Activation Context is to be hijacked."), "");
+    opts.optflag("n", &lc!("new-console"), &lc!("Set CREATE_NEW_CONSOLE flag to spawn the new process."));
+    opts.optflag("d", &lc!("debug"), &lc!("Enable SeDebugPrivilege to interact with the remote process."));
 
     let matches = match opts.parse(&args[1..]) 
     {
