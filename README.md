@@ -25,23 +25,23 @@ Eclipse is a PoC that performs [Activation Context](https://learn.microsoft.com/
 - [How it works](#How-it-works)
 - [How to use it](#How-to-use-it)
 - [Examples](#Examples)
-  - [Hijack AC of a new process](#Hijack-AC-of-a-new-process)
+  - [Hijacking the AC of a new process](#Hijacking-the-AC-of-a-new-process)
   - [Spawn powershell with ETW and AMSI disabled](#Spawn-powershell-with-ETW-and-AMSI-disabled)
-  - [Hijack the AC of an already running process](#Hijack-the-AC-of-an-already-running-process)
+  - [Hijacking the AC of an already running process](#Hijacking-the-AC-of-an-already-running-process)
 - [Conclusions](#Conclusions)
 - [References](#References)
 
 # How it works 
 
-By definition, Activation Contexts are "data structures in memory containing information that the system can use to redirect an application to load a particular DLL version" and also can be used to determine the path from where a specific dll has to be loaded. An Activation Context is created by parsing the contents of a manifest file. When a process is created, the OS parses the binary's manifest (which can be embbeded in the binary itself or as a independent file in the same directory) and it maps in the memory of the newly spawned process what I call the main **Activation Context**. This main AC will be used to find the right file each time a DLL has to be loaded (regardless of whether this load is due to dependencies in the IAT of a module or as a call to Loadlibray). 
+By definition, Activation Contexts are "data structures in memory containing information that the system can use to redirect an application to load a particular DLL version" and also can be used to determine the path from where a specific dll has to be loaded. An Activation Context is created by parsing the contents of a manifest file. When a process is created, the OS parses the binary's manifest (which can be embbeded in the binary itself or as a independent file in the same directory) and it maps in the memory of the newly spawned process what I call the main **Activation Context**. This main AC will be used to find the right file each time a DLL has to be loaded (regardless of whether this loading is due to dependencies in the IAT of a module or as a call to Loadlibray). 
 
 Additionally, a thread can create and activate a custom AC at runtime. In that particular scenario, if that specific thread tries to load a DLL the thread's custom AC will be used first and, just in case that AC doesn't contain information regarding the DLL to be loaded, then the main AC of the process will be consulted. 
 
-The memory address of the main AC of a process is obtained from the PEB, while custom AC activated by a thread are obtained from an AC stack located in the TEB. This mean one thread can create and activate multiple custom AC which will be pushed on this AC stack, and only the last activated AC (the one on top of the stack) will be used to determine the path of a DLL to be loaded.
+The memory address of the main AC of a process is obtained from the PEB, while custom AC activated by a thread are obtained from an AC stack located in the TEB. This means one thread can create and activate multiple custom AC which will be pushed on this AC stack, and only the last activated AC (the one on top of the stack) will be used to determine the path of a DLL to be loaded.
 
-With this in mind, Eclipse offers two modes of use:
+With this information in mind, Eclipse offers two modes of use:
 * You can spawn a new process to run your DLL in it. In this case, the process will be spawned in suspended mode and the main AC referenced by the PEB will be hijacked, allowing to set a custom AC (which I will refer to in this README as the “malicious” AC) as the main AC of the process. This will redirect the application to load your DLL instead of the legitimate DLL that would be loaded normally when the process execution is resumed.
-* You can try to hijack the active AC of a running process. In case the main thread of that particular process has a custom AC activated, Eclipse will hijack the AC stack located in the TEB. Otherwise, the main AC referenced in the PEB will be hijacked. The result in both cases is the same: in case the main thread of the process tries to load a DLL referenced by the malicious AC created by Eclipse, your DLL will be loaded instead. 
+* You can try to hijack the active AC of a running process. In case the main thread of that particular process has a custom AC activated, Eclipse will hijack the AC stack located in the TEB. Otherwise, the main AC referenced in the PEB will be hijacked again. The result in both cases is the same: in case the main thread of the process tries to load a DLL referenced by the malicious AC created by Eclipse, your DLL will be loaded instead. 
 
 # How to use it 
 Regardless you are spawning a new process or hijacking an already running process, Eclipse needs a manifest file from which it will create the malicious AC. Some examples can be found in the **manifests** folder of this repository, although you can also obtain the manifest file embedded in any binary and modify it at will. To obtain the manifest file of a binary, I use the [Microsot Manifest Tool](https://learn.microsoft.com/en-us/cpp/build/reference/manifest-tool-property-pages?view=msvc-170). The following command extracts the manifest file of a executable and saves it in the specified location:
@@ -57,9 +57,9 @@ In case you want to embed the modified manifest file in the resulting Eclipse ex
 	C:\Temp> mt.exe -manifest "C:\Temp\fakecmd.exe.manifest" -outputresource:"C:\Path\To\Eclipse\eclipse\target\release\eclipse.exe";#4 <- Embed the manifest file in the resource ID 4
 
 # Examples
-## Hijack AC of a new process
+## Hijacking the AC of a new process
 
-This first example is meant to give some guidelines on how to use AC hijack to load and run your DLL in a trusted process. In this case, `rdpclip.exe` (Windows 10 workstation) will be the selected process, although this methodology can be applied to almost any other process.
+This first example is meant to give some guidelines on how to use AC hijacking to load and run your DLL in a trusted process. In this case, `rdpclip.exe` (Windows 10 workstation) will be the selected process, although this methodology can be applied to almost any other process.
 First, we need to find a DLL that will be loaded in that process in a normal execution. For this, we can use [PE-bear](https://github.com/hasherezade/pe-bear) to inspect the IAT of the binary.
 
 ![rdpclip.exe IAT.](/images/pebear.PNG "rdpclip.exe IAT.")
@@ -127,7 +127,7 @@ Now, we just need to use `ADPT` once again to create a proxy dll that runs our d
 	C:\Path\To\ADPT\Generator\target\release> generator.exe -m proxy -p C:\Windows\System32\crypt32.dll -e I_CryptCreateLruCache
 	C:\Path\To\ADPT\ProxyDll> cargo build --release
 
-Change the `loadFrom` field of the `C:\Temp\rdpclip.exe.manifest` file to point to the generated `proxydll.dll` and embed the manifest in `eclipse.exe` as before. Kill the previously spawned `rdpclip.exe` process (only one `rdpclip.exe` can be running per user session) and run Eclipse once again. The ProxyDll will be loaded and the payload inserted in the `I_CryptCreateLruCache` function will be executed within `rdpclip.exe` (in this case, just an infinite loop in a new thread):
+Change the `loadFrom` field of the `C:\Temp\rdpclip.exe.manifest` file to point to the generated `proxydll.dll` and embed the manifest in `eclipse.exe` as before. Kill the previously spawned `rdpclip.exe` process (only one `rdpclip.exe` can be running per user session) and run Eclipse once again. The ProxyDll will be loaded and the payload inserted in the `I_CryptCreateLruCache` function will be executed inside `rdpclip.exe` (in this case, just an infinite loop in a new thread):
 
 ![Main AC hijacked.](/images/proxydll.PNG "Main AC hijacked.")
 
@@ -135,7 +135,7 @@ Note how unlike when performing a regular DLL proxying, with this technique the 
 
 ## Spawn powershell with ETW and AMSI disabled
 
-Since the hijack of the main AC of a process allows us to redirect the load of any DLL, this technique can be used to modify the behaviour of a process. As a example, let's see how to use Eclipse to spawn a `powershell.exe` process with ETW (usermode) and AMSI disabled. To do so, we just need to redirect the loading of the DLLs responsible of those features: `amsi.dll` and `advapi32.dll`. First, let's create with ADPT the proxy DLL that will intercept the calls to `amsi.dll`:
+Since the hijacking of the main AC of a process allows us to redirect the loading of any DLL, this technique can be used to modify the behaviour of a process. As a example, let's see how to use Eclipse to spawn a `powershell.exe` process with ETW (usermode) and AMSI disabled. To do so, we just need to redirect the loading of the DLLs responsible for those features: `amsi.dll` and `advapi32.dll`. First, let's create with ADPT the proxy DLL that will intercept the calls to `amsi.dll`:
 
 	C:\Path\To\ADPT\Generator\target\release> generator.exe -m proxy -p C:\Windows\System32\amsi.dll -e AmsiScanBuffer
 
@@ -233,15 +233,15 @@ The new `powershell.exe` process will have AMSI and ETW disabled. The first one 
 
 ![AMSI disabled.](/images/powershell1.PNG "AMSI disabled.")
 
-To check that ETW is disabled too, the tab .NET assemblies of PH can be used. This tab opens an ETW session to get this information, but since the CLR is unable to write the required events due to our proxy DLL always returning `ERROR_INVALID_HANDLE` no information is displayed and instead an error message appears:
+To check that ETW is disabled too, the .NET assemblies tab of PH can be checked. This tab opens an ETW session to get the required information, but since the CLR is unable to write the relevant ETW events due to our proxy DLL always returning `ERROR_INVALID_HANDLE` no information is displayed and instead an error message appears:
 
 ![ETW disabled.](/images/powershell2.PNG "ETW disabled.")
 
 This is just an example to show the potential of the technique. The same concept could be abused to modify the behaviour of a process in many other ways.
 
-## Hijack the AC of an already running process
+## Hijacking the AC of an already running process
 
-We can also hijack the active AC of a running process right before triggering the load of some DLL. To illustrate this, we will use the [Dll Hijack in StorSvc service](https://github.com/blackarrowsec/redteam-research/tree/master/LPE%20via%20StorSvc), altough it wouldn't make any sense to perform this action in a real scenario. Anyway, the execution of the [RpcClient](https://github.com/blackarrowsec/redteam-research/tree/master/LPE%20via%20StorSvc/RpcClient) triggers a `LoadLibraryW("SprintCSP.dll")` from the `StorSvc` service, which will look for this file in all paths set in the `%Path%` environment variable. In case it finds the DLL, it then calls the `FactoryResetUICC` exported function:
+We can also hijack the active AC of a running process right before triggering the loading of some DLL. To illustrate this, we will use the [DLL Hijack in StorSvc service](https://github.com/blackarrowsec/redteam-research/tree/master/LPE%20via%20StorSvc), altough it wouldn't make any sense to perform this action in a real scenario. Anyway, the execution of the [RpcClient](https://github.com/blackarrowsec/redteam-research/tree/master/LPE%20via%20StorSvc/RpcClient) triggers a `LoadLibraryW("SprintCSP.dll")` from the `StorSvc` service, which will look for this file in all paths set in the `%Path%` environment variable. In case it finds the DLL, it then calls the `FactoryResetUICC` exported function:
 
 ![DLL search order triggered.](/images/hijack1.PNG "DLL search order triggered.")
 
@@ -274,24 +274,26 @@ Then, hijack the AC of the service with the following command (admin privileges 
 	[+] Activation Context mapped in the remote process.
 	[+] PEB successfully patched.
 
-Once this is done, if we execute `RpcClient` once again instead of following the default DLL search order the service will load the DLL located in `C:\Temp\MyDll.dll`, executing the `FactoryResetUICC` exported function of that DLL:
+Once this is done, if we execute `RpcClient` instead of following the default DLL search order the service will load the DLL located in `C:\Temp\MyDll.dll`, executing the `FactoryResetUICC` exported function of that DLL:
 
 ![StorSvc AC hijacked.](/images/hijack2.PNG "StorSvc AC hijacked.")
 
-In this case, the `FactoryResetUICC` of `C:/Temp/MyDll.dll` was just an infinite loop and its execution can be checked using PH:
+In this case, the `FactoryResetUICC` of `C:\Temp\MyDll.dll` is just an infinite loop and its execution can be checked using PH:
 
 ![FactoryResetUICC function executed.](/images/hijack3.PNG "FactoryResetUICC function executed.")
 
 # Conclusions
 
-Some uses have been explored in this document, altough I've found this technique to be useful in many other ways. Since we can redirect the loading of any DLL in the vast majority of scenarios (unless the full path of the DLL is being passed to LoadLibrary and so on) it means we can modify the normal behavior of an arbitrary process at will. These are **some of the alternative uses** that I documented while testing AC hijack (probably you can figure out additional ways to abuse of the technique):
-
+Some uses have been explored in this document, altough I've found this technique to be useful in many other ways. Since we can redirect the loading of any DLL in the vast majority of scenarios (unless the full path of the DLL is being passed to LoadLibrary and so on) it means we can modify the normal behavior of an arbitrary process at will. These are **some of the alternative uses** that I documented while developing this tool (probably you can figure out additional ways to abuse of the technique):
 * Despite being mapped from the start of the process, `ntdll.dll` can also be impersonated using a custom AC. This means that any call to `LoadLibraryW("ntdll.dll")` or the loading of an arbitrary module with dependencies on its IAT pointing to `ntdll.dll` will result in the loading of our proxy DLL (if the manifest file has been properly crafted as shown above). Impersonation of `ntdll.dll` opens the door to multiple scenarios.
-	- As my colleague [@httpyxel](https://twitter.com/httpyxel) commented, this ìmpersonation can be used to apply Call Stack Spoofing to all your calls before entering kernel mode in a transparent way.
+	- As my colleague [@httpyxel](https://twitter.com/httpyxel) commented, this impersonation can be used to apply Call Stack Spoofing to all your calls before entering kernel mode in a transparent way.
 	- The same way, the proxy DLL can be use to transparently execute indirect syscalls for any Nt function.
 	- You can intercept all the calls before entering kernel mode, which may be useful to deny telemetry to the EDR (a more powerful ETW bypass than impersonating `advapi32.dll`).
 	- This could be used in many other ways, like creating custom memory allocators or for debugging purposes.
-* It dependes on how the DLL is loaded in the process, but this technique can also be used in most cases to redirect the loading of EDR DLLs. I leave it to the reader the task to figure out what can can be done when you impersonate the EDR DLLs.
-* Since the `loadFrom` field of the `<file>` tag in a manifest file allows the use of UNC paths (in a similar way as [LoadLibrary](https://x.com/_Kudaes_/status/1856726574134882552) does) this technique can be use to coerce NTLM authentication against a remote share or to load a DLL in the process without dropping a copy of the binary to the host.
+* It dependes on how the DLL is loaded into the process, but this technique can also be used in most cases to redirect the loading of EDR DLLs. I leave it to the reader the task to figure out what can can be done when you impersonate the EDR DLLs.
+* Since the `loadFrom` field of the `<file>` tag in a manifest file allows the use of UNC paths (in a similar way as [LoadLibrary](https://x.com/_Kudaes_/status/1856726574134882552) does) this technique can be used to coerce NTLM authentication against a remote share or to load a DLL in the process without dropping a copy of the binary to the host.
 
 # References
+
+* [Everything you Never Wanted to Know about WinSxS](https://omnicognate.wordpress.com/2009/10/05/winsxs/)
+* [Activation Context Cache Poisoning](https://www.zerodayinitiative.com/blog/2023/1/23/activation-context-cache-poisoning-exploiting-csrss-for-privilege-escalation)
