@@ -125,7 +125,7 @@ fn main()
         manifest_path = matches.opt_str("f").unwrap();
     }
 
-    if mode == "spawn".to_string() 
+    if mode == lc!("spawn") 
     {
         if !matches.opt_present("b") {
             print_usage(&program, opts);
@@ -139,7 +139,7 @@ fn main()
         binary_path = matches.opt_str("b").unwrap();
         spawn_new_process(binary_path, resource_index, manifest_path, new_console);
     } 
-    else if mode == "hijack".to_string() 
+    else if mode == lc!("hijack") 
     {
         if matches.opt_present("p") {
             pid = matches.opt_str("p").unwrap().parse().unwrap();
@@ -714,6 +714,6 @@ fn align_to_mempage(vsize: usize) -> usize {
 }
 
 fn print_usage(program: &str, opts: Options) {
-    let brief = format!(r"Usage: {} -m spawn|hijack -b C:\Windows\System32\rdpclip.exe -r 3 [options]", program);
+    let brief = format!("Usage: {} {}", program, lc!(r"-m spawn|hijack -b C:\Windows\System32\rdpclip.exe -r 3 [options]"));
     print!("{}", opts.usage(&brief));
 }

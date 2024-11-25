@@ -283,4 +283,15 @@ In this case, the `FactoryResetUICC` of `C:/Temp/MyDll.dll` was just an infinite
 ![FactoryResetUICC function executed.](/images/hijack3.PNG "FactoryResetUICC function executed.")
 
 # Conclusions
+
+Some uses have been explored in this document, altough I've found this technique to be useful in many other ways. Since we can redirect the loading of any DLL in the vast majority of scenarios (unless the full path of the DLL is being passed to LoadLibrary and so on) it means we can modify the normal behavior of an arbitrary process at will. These are **some of the alternative uses** that I documented while testing AC hijack (probably you can figure out additional ways to abuse of the technique):
+
+* Despite being mapped from the start of the process, `ntdll.dll` can also be impersonated using a custom AC. This means that any call to `LoadLibraryW("ntdll.dll")` or the loading of an arbitrary module with dependencies on its IAT pointing to `ntdll.dll` will result in the loading of our proxy DLL (if the manifest file has been properly crafted as shown above). Impersonation of `ntdll.dll` opens the door to multiple scenarios.
+	- As my colleague [@httpyxel](https://twitter.com/httpyxel) commented, this ìmpersonation can be used to apply Call Stack Spoofing to all your calls before entering kernel mode in a transparent way.
+	- The same way, the proxy DLL can be use to transparently execute indirect syscalls for any Nt function.
+	- You can intercept all the calls before entering kernel mode, which may be useful to deny telemetry to the EDR (a more powerful ETW bypass than impersonating `advapi32.dll`).
+	- This could be used in many other ways, like creating custom memory allocators or for debugging purposes.
+* It dependes on how the DLL is loaded in the process, but this technique can also be used in most cases to redirect the loading of EDR DLLs. I leave it to the reader the task to figure out what can can be done when you impersonate the EDR DLLs.
+* Since the `loadFrom` field of the `<file>` tag in a manifest file allows the use of UNC paths (in a similar way as [LoadLibrary](https://x.com/_Kudaes_/status/1856726574134882552) does) this technique can be use to coerce NTLM authentication against a remote share or to load a DLL in the process without dropping a copy of the binary to the host.
+
 # References
