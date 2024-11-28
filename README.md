@@ -6,19 +6,22 @@ Eclipse is a PoC that performs [Activation Context](https://learn.microsoft.com/
 	Usage: eclipse.exe -m spawn|hijack -b C:\Windows\System32\rdpclip.exe -r 3 [options]
 
 	Options:
-    -h, --help          Print this help menu.
-    -m, --mode          Hijack the Activation Context of a new (spawn) or an
-                        already running (hijack) process.
-    -b, --binary        Absolute path to the executable used to spawn the new
-                        process.
-    -f, --manifest-file
-                        Path to the manifest file from which the new
-                        Activation Context is created.
-    -r, --resource-number
-                        Resource index of the current executable where the
-                        manifest is located.
-    -p, --pid           PID of the process whose Activation Context is to be
-                        hijacked.
+	    -h, --help          Print this help menu.
+	    -m, --mode          Hijack the Activation Context of a new (spawn) or an
+	                        already running (hijack) process.
+	    -b, --binary        Absolute path to the executable used to spawn the new
+	                        process.
+	    -f, --manifest-file
+	                        Path to the manifest file from which the new
+	                        Activation Context is created.
+	    -r, --resource-number
+	                        Resource index of the current executable where the
+	                        manifest is located.
+	    -p, --pid           PID of the process whose Activation Context is to be
+	                        hijacked.
+	    -n, --new-console   Set CREATE_NEW_CONSOLE flag to spawn the new process.
+	    -d, --debug         Enable SeDebugPrivilege to interact with the remote
+	                        process.
 
 # Content
 
@@ -33,7 +36,7 @@ Eclipse is a PoC that performs [Activation Context](https://learn.microsoft.com/
 
 # How it works 
 
-By definition, Activation Contexts are "data structures in memory containing information that the system can use to redirect an application to load a particular DLL version" and also can be used to determine the path from where a specific dll has to be loaded. An Activation Context is created by parsing the contents of a manifest file. When a process is created, the OS parses the binary's manifest (which can be embbeded in the binary itself or as a independent file in the same directory) and it maps in the memory of the newly spawned process what I call the main **Activation Context**. This main AC will be used to find the right file each time a DLL has to be loaded (regardless of whether this loading is due to dependencies in the IAT of a module or as a call to Loadlibray). 
+By definition, Activation Contexts are "data structures in memory containing information that the system can use to redirect an application to load a particular DLL version" and also can be used to determine the path from where a specific DLL has to be loaded. An Activation Context is created by parsing the contents of a manifest file. When a process is created, the OS parses the binary's manifest (which can be embbeded in the binary itself or as a independent file in the same directory) and it maps in the memory of the newly spawned process what I call the **main Activation Context**. This main AC will be used to find the right file each time a DLL has to be loaded (regardless of whether this loading is due to dependencies in the IAT of a module or as a call to Loadlibray). 
 
 Additionally, a thread can create and activate a custom AC at runtime. In that particular scenario, if that specific thread tries to load a DLL the thread's custom AC will be used first and, just in case that AC doesn't contain information regarding the DLL to be loaded, then the main AC of the process will be consulted. 
 
@@ -54,22 +57,22 @@ Once the manifest file has been modified, just compile Eclipse in `release` mode
 
 In case you want to embed the modified manifest file in the resulting Eclipse executable, you can use MT once again (I recommend to avoid using resource ID 1):
 
-	C:\Temp> mt.exe -manifest "C:\Temp\fakecmd.exe.manifest" -outputresource:"C:\Path\To\Eclipse\eclipse\target\release\eclipse.exe";#4 <- Embed the manifest file in the resource ID 4
+	C:\Temp> mt.exe -manifest "C:\Temp\cmd.exe.manifest" -outputresource:"C:\Path\To\Eclipse\eclipse\target\release\eclipse.exe";#4 <- Embed the manifest file in the resource ID 4
 
 # Examples
 ## Hijacking the AC of a new process
 
-This first example is meant to give some guidelines on how to use AC hijacking to load and run your DLL in a trusted process. In this case, `rdpclip.exe` (Windows 10 workstation) will be the selected process, although this methodology can be applied to almost any other process.
-First, we need to find a DLL that will be loaded in that process in a normal execution. For this, we can use [PE-bear](https://github.com/hasherezade/pe-bear) to inspect the IAT of the binary.
+This first example is meant to give some guidelines on how to use AC hijacking to load and run your DLL in a trusted process. In this case, `rdpclip.exe` (Windows 10 workstation) will be the selected process, although this methodology could be applied to almost any other process.
+First, we need to find a DLL that would be loaded in that process in a normal execution. To do so, we can use [PE-bear](https://github.com/hasherezade/pe-bear) to inspect the IAT of the binary.
 
 ![rdpclip.exe IAT.](/images/pebear.PNG "rdpclip.exe IAT.")
 
-This inspection shows that `crypt32.dll` will be loaded at the process initialization, meaning this DLL is one of the multiple potential targets. Now, we need to know if any function of this DLL is being called during the normal execution of this process. For that, I use [ADPT](https://github.com/Kudaes/ADPT) ExportTracer, that will log in a file each function of a particular DLL that is called during the execution of the process. The ExportTracer DLL can be created with the following command (check ADPT Readme file for further instructions about how to use the tool):
+This inspection shows that `crypt32.dll` will be loaded at the process initialization, meaning this DLL is one of the multiple potential targets. Now, we need to know which functions (if any) of this DLL are being called during the normal execution of this process. For that, I use [ADPT](https://github.com/Kudaes/ADPT) ExportTracer project, that will log in a file each function of a particular DLL that is called during the execution of the process. The ExportTracer DLL can be created with the following command (check ADPT's README file for further instructions about how to use the tool):
 	
 	C:\Path\To\ADPT\Generator\target\release> generator.exe -m trace -p C:\Windows\System32\crypt32.dll -l C:\Temp\logfile.txt
 	C:\Path\To\ADPT\ExportTracer> cargo build --release
 
-The idea is that once the main AC of `rdpclip.exe` is hijacked by Eclipse, the recently compiled `exporttracer.dll` will be loaded instead of `crypt32.dll`. To do so, we need a custom manifest file that redirects the application into loading our DLL. To create the manifest file, we can use MT to extract the original manifest file of `rdpclip.exe` and then modify it at will:
+The idea is that once the main AC of `rdpclip.exe` is hijacked by Eclipse, the recently compiled `exporttracer.dll` will be loaded instead of `crypt32.dll`. For this, we need a custom manifest file from which Eclipse will create the malicious AC that will redirect the application to load our DLL. To craft the manifest file, we can use MT to extract the original manifest file of `rdpclip.exe` and then modify it at will:
 
 	C:\Temp> mt.exe -inputresource:"C:\Windows\System32\rdpclip.exe";#1 -out:"C:\Temp\rdpclip.exe.manifest"
 
@@ -131,11 +134,11 @@ Change the `loadFrom` field of the `C:\Temp\rdpclip.exe.manifest` file to point 
 
 ![Main AC hijacked.](/images/proxydll.PNG "Main AC hijacked.")
 
-Note how unlike when performing a regular DLL proxying, with this technique the proxy DLL does not need to have the same name as the DLL to which the calls are being forwarded, removing that specific IoC.
+Note that unlike when performing a regular DLL proxying, with this technique the proxy DLL does not need to have the same name as the DLL to which the calls are being forwarded, removing that specific IoC.
 
 ## Spawn powershell with ETW and AMSI disabled
 
-Since the hijacking of the main AC of a process allows us to redirect the loading of any DLL, this technique can be used to modify the behaviour of a process. As a example, let's see how to use Eclipse to spawn a `powershell.exe` process with ETW (usermode) and AMSI disabled. To do so, we just need to redirect the loading of the DLLs responsible for those features: `amsi.dll` and `advapi32.dll`. First, let's create with ADPT the proxy DLL that will intercept the calls to `amsi.dll`:
+Since the hijacking of the main AC of a new process allows us to redirect the loading of any DLL, this technique can be used to modify the behaviour of that process. As a example, let's see how to use Eclipse to spawn a `powershell.exe` process with ETW (usermode) and AMSI disabled. To do so, we just need to redirect the loading of the DLLs responsible for those features: `amsi.dll` and `advapi32.dll`. First, let's create with ADPT the proxy DLL that will intercept the calls to `amsi.dll`:
 
 	C:\Path\To\ADPT\Generator\target\release> generator.exe -m proxy -p C:\Windows\System32\amsi.dll -e AmsiScanBuffer
 
@@ -181,7 +184,7 @@ fn EventWriteTransfer(arg1:u64, arg2:u64, arg3:u64, arg4:u64, arg5:u64, arg6:u64
 }
 ```
 
-Once again, compile on `release` mode. Finally, let's craft the manifest file from which Eclipse will create the malicious AC:
+Once again, compile ProxyDll on `release` mode. Finally, let's craft the manifest file from which Eclipse will create the malicious AC:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
